@@ -8,7 +8,7 @@ from chatbot_backend import chatbot
 
 # ************************* page config + styles *************************
 
-st.set_page_config(page_title='Ladle Chatbot', page_icon=':material/forum:', layout='centered')
+st.set_page_config(page_title='JPT', page_icon=':material/forum:', layout='centered')
 
 # empty screen par dikhne wale ready-made prompts
 SUGGESTIONS = [
