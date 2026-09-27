@@ -1,0 +1,22 @@
+# Ladle Chatbot theme (dark, violet accent, Inter font)
+# Note: theme change ke baad streamlit ko restart karna padta hai
+[theme]
+base = "dark"
+primaryColor = "#7C3AED"
+backgroundColor = "#0E0E14"
+secondaryBackgroundColor = "#1A1A24"
+textColor = "#ECECF4"
+borderColor = "#262633"
+linkColor = "#A78BFA"
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+baseRadius = "12px"
+buttonRadius = "10px"
+showWidgetBorder = true
+
+[theme.sidebar]
+backgroundColor = "#13131B"
+secondaryBackgroundColor = "#1C1C27"
+borderColor = "#23232F"
+
+[client]
+toolbarMode = "minimal"
