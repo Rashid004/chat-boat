@@ -2,9 +2,10 @@ from langgraph.graph import StateGraph, START, END
 from typing import TypedDict, Annotated
 from langchain_core.messages import BaseMessage
 from langchain_openai import ChatOpenAI
-from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph.message import add_messages
 from dotenv import load_dotenv
+import sqlite3
 
 load_dotenv()
 
@@ -19,8 +20,10 @@ def chat_node(state: ChatState):
   response = llm.invoke(messages)
   return {"messages": [response]}
 
+connection = sqlite3.connect(database='chatbot.db', check_same_thread=False)
+
 # Check Pointer
-checkpointer = InMemorySaver()
+checkpointer = SqliteSaver(conn=connection)
 
 graph = StateGraph(ChatState)
 
@@ -30,5 +33,14 @@ graph.add_edge("chat_node", END)
 
 chatbot = graph.compile(checkpointer=checkpointer)
 
-# result = chatboat.invoke({"messages": [{"role": "user", "content": "Hello!"}]})
-# print(result["messages"][-1].content)
+def retrieve_all_threads():
+    """DB mein saved saare thread ids, purane se naye order mein."""
+    all_threads = []
+    # list() naye checkpoints pehle deta hai; set() order kho deta, isliye list
+    for checkpoint in checkpointer.list(None):
+        thread_id = checkpoint.config['configurable']['thread_id']
+        if thread_id not in all_threads:
+            all_threads.append(thread_id)
+
+    # frontend [::-1] karta hai, isliye yahan purane pehle rakho
+    return all_threads[::-1]

@@ -1,9 +1,7 @@
 import uuid
-
 import streamlit as st
 from langchain_core.messages import AIMessage, HumanMessage
-
-from chatbot_backend import chatbot
+from chatbot_backend import chatbot, retrieve_all_threads
 
 
 # ************************* page config + styles *************************
@@ -244,7 +242,7 @@ if 'thread_id' not in st.session_state:
     st.session_state['thread_id'] = generate_thread_id()
 
 if 'chat_threads' not in st.session_state:
-    st.session_state['chat_threads'] = []
+    st.session_state['chat_threads'] = retrieve_all_threads()
 
 add_thread(st.session_state['thread_id'])
 
@@ -254,7 +252,7 @@ add_thread(st.session_state['thread_id'])
 with st.sidebar:
     st.markdown(
         f'<div class="brand"><div class="brand-logo">{SPARKLES_SVG.format(size=18)}</div>'
-        '<div><div class="brand-name">Ladle</div>'
+        '<div><div class="brand-name">JPT</div>'
         '<div class="brand-sub">AI assistant</div></div></div>',
         unsafe_allow_html=True,
     )
@@ -268,7 +266,7 @@ with st.sidebar:
 
 CONFIG = {'configurable': {'thread_id': st.session_state['thread_id']}}
 
-user_input = st.chat_input('Message Ladle…')
+user_input = st.chat_input('Message JPT…')
 # chat box ya suggestion card, jo bhi aaya ho
 prompt = user_input or st.session_state.pop('pending_prompt', None)
 
