@@ -264,7 +264,12 @@ with st.sidebar:
 
 # ************************* main chat *************************
 
-CONFIG = {'configurable': {'thread_id': st.session_state['thread_id']}}
+# configurable: checkpointer ke liye; metadata + run_name: LangSmith trace ke liye
+CONFIG = {
+    'configurable': {'thread_id': st.session_state['thread_id']},
+    'metadata': {'thread_id': st.session_state['thread_id']},
+    'run_name': 'chat_turn',
+}
 
 user_input = st.chat_input('Message JPT…')
 # chat box ya suggestion card, jo bhi aaya ho

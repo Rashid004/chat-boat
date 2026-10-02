@@ -1,7 +1,7 @@
 from langgraph.graph import StateGraph, START, END
 from typing import TypedDict, Annotated
 from langchain_core.messages import BaseMessage
-from langchain_openai import ChatOpenAI
+from langchain_groq import ChatGroq
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph.message import add_messages
 from dotenv import load_dotenv
@@ -9,7 +9,8 @@ import sqlite3
 
 load_dotenv()
 
-llm = ChatOpenAI()
+# OpenAI key revoked hai, abhi Groq use kar rahe hain (GROQ_API_KEY .env se aata hai)
+llm = ChatGroq(model='openai/gpt-oss-120b')
 
 class ChatState(TypedDict):
   messages: Annotated[list[BaseMessage], add_messages]
