@@ -1,4 +1,5 @@
 import html
+import re
 import uuid
 from urllib.parse import urlparse
 
@@ -246,12 +247,35 @@ def load_conversation(thread_id):
     return state.values.get('messages', [])
 
 
+SPACE_FIX = str.maketrans({'\u202f': ' ', '\u00a0': ' ', '\u2009': ' '})  # gpt-oss ke special spaces ("TimCook" bug)
 TOOL_LABELS = {
     'web_search': 'Searching the web',
     'calculator': 'Calculating',
     'get_current_datetime': 'Checking the time',
 }
 MAX_IMAGES, MAX_SOURCES = 4, 5
+
+
+def clean_text(text):
+    """Purane/saved jawab se 【citation】 markers hatata hai aur special spaces theek karta hai."""
+    return re.sub(r'【[^】]*】', '', text).translate(SPACE_FIX)
+
+
+def strip_citations(tokens):
+    """Stream ke tokens se 【...】 hatata hai (marker kai tokens mein toot sakta hai, isliye state rakhi)."""
+    inside = False
+    for token in tokens:
+        kept = []
+        for ch in token:
+            if ch == '【':
+                inside = True
+            elif ch == '】':
+                inside = False
+            elif not inside:
+                kept.append(ch)
+        text = ''.join(kept).translate(SPACE_FIX)
+        if text:
+            yield text
 
 
 def new_extras():
@@ -322,7 +346,7 @@ def to_ui_messages(messages):
         # sirf asli AI jawab dikhao; tool call wale (khaali content) chhupao
         elif isinstance(msg, AIMessage) and msg.content:
             ui_messages.append({
-                'role': 'assistant', 'content': msg.content,
+                'role': 'assistant', 'content': clean_text(msg.content),
                 'images': extras['images'], 'sources': extras['sources'],
             })
             extras = new_extras()
@@ -449,7 +473,7 @@ if prompt:
 
         try:
             stream = hide_on_first_token(ai_only_stream(prompt, CONFIG, on_status, extras), typing, state)
-            ai_message = st.write_stream(stream)
+            ai_message = st.write_stream(strip_citations(stream))
             render_extras_bottom(extras['sources'])
         except Exception as error:
             typing.empty()
