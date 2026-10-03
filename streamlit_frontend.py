@@ -199,8 +199,11 @@ def to_ui_messages(messages):
     """LangChain messages ko UI format {'role', 'content'} mein badalta hai."""
     ui_messages = []
     for msg in messages:
-        role = 'user' if isinstance(msg, HumanMessage) else 'assistant'
-        ui_messages.append({'role': role, 'content': msg.content})
+        if isinstance(msg, HumanMessage):
+            ui_messages.append({'role': 'user', 'content': msg.content})
+        # sirf asli AI jawab dikhao; tool call wale (khaali content) aur ToolMessage chhupao
+        elif isinstance(msg, AIMessage) and msg.content:
+            ui_messages.append({'role': 'assistant', 'content': msg.content})
     return ui_messages
 
 
