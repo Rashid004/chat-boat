@@ -3,7 +3,7 @@ from typing import Annotated, Literal, TypedDict
 import sqlite3
 
 from dotenv import load_dotenv
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage, SystemMessage
 from langchain_core.tools import tool
 from langchain_groq import ChatGroq
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -72,9 +72,20 @@ class ChatState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
 
 
+# system prompt har call par judta hai, par state/DB mein save nahi hota
+SYSTEM_PROMPT = SystemMessage(content=(
+    "You are JPT, a helpful assistant. "
+    "Use web_search when the answer may depend on recent or changing information "
+    "(news, current events, prices, sports, weather, recent facts) or when you are unsure. "
+    "For 'today', 'latest', 'breaking' or 'current' questions use topic='news'. "
+    "Answer directly, without searching, for general knowledge, coding, or casual chat. "
+    "Never say you lack real-time access; search instead. Mention the source when you use search results."
+))
+
+
 def chat_node(state: ChatState):
     """LLM ko poori history bhejo; jawab ya to text hoga ya tool call."""
-    response = llm_with_tools.invoke(state['messages'])
+    response = llm_with_tools.invoke([SYSTEM_PROMPT] + state['messages'])
     return {'messages': [response]}
 
 
