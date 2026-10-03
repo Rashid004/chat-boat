@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated, TypedDict
+from typing import Annotated, Literal, TypedDict
 import sqlite3
 
 from dotenv import load_dotenv
@@ -10,6 +10,8 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import StateGraph, START
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
+
+from langchain_tavily import TavilySearch
 
 load_dotenv()
 
@@ -41,7 +43,19 @@ def get_current_datetime() -> str:
     """Get the current local date and time. Use this for any question about today, now, or the time."""
     return datetime.now().strftime('%A, %d %B %Y, %I:%M %p')
 
-tools = [calculator, get_current_datetime]
+# TavilySearch ke ~10 optional args se gpt-oss confuse hota hai (galat tool call bhejta hai).
+# Isliye chhota wrapper: LLM ko sirf 2 args dikhte hain, aur topic wo khud chunta hai.
+_tavily = TavilySearch(max_results=3)
+
+
+@tool
+def web_search(query: str, topic: Literal['general', 'news'] = 'general') -> dict:
+    """Search the web for current information. Use topic='news' for news and current events,
+    topic='general' for everything else (facts, prices, sports, weather)."""
+    return _tavily.invoke({'query': query, 'topic': topic})
+
+
+tools = [calculator, get_current_datetime, web_search]
 
 
 # ************************* Step 2: LLM ko tools batao *************************
