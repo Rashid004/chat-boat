@@ -1,5 +1,6 @@
 import html
 import uuid
+from urllib.parse import urlparse
 
 import streamlit as st
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -164,10 +165,37 @@ button:focus-visible { outline: 2px solid var(--primary-soft); outline-offset: 2
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 
+/* ---------- image gallery (aspect-ratio reserves space, so no layout shift) ---------- */
+.gallery { display: grid; grid-template-columns: repeat(2, 1fr); gap: .5rem; margin: .35rem 0 .85rem; }
+.gallery.g1 { grid-template-columns: minmax(0, 420px); }
+.gallery a {
+    display: block; overflow: hidden; border-radius: 12px; aspect-ratio: 16 / 10;
+    background: var(--surface); border: 1px solid var(--border); transition: border-color .15s ease;
+}
+.gallery.g3 a:first-child { grid-column: 1 / -1; aspect-ratio: 21 / 9; }
+.gallery a:hover { border-color: var(--primary); }
+.gallery img {
+    width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .3s ease;
+}
+.gallery a:hover img { transform: scale(1.04); }
+
+/* ---------- source chips ---------- */
+.sources { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: .65rem 0 .25rem; }
+.sources-label { font-size: .72rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); margin-right: .15rem; }
+.src {
+    display: inline-flex; align-items: center; gap: .4rem; padding: .3rem .7rem; border-radius: 999px;
+    font-size: .78rem; text-decoration: none !important; color: var(--text-muted) !important;
+    background: var(--surface); border: 1px solid var(--border);
+    transition: border-color .15s ease, color .15s ease;
+}
+.src:hover { border-color: var(--primary); color: var(--text) !important; }
+.src b { color: var(--primary-soft); font-weight: 600; }
+
 @media (prefers-reduced-motion: reduce) {
     .typing span { animation: none; opacity: .6; }
     .status-pill .spin { animation: none; }
     .status-pill .status-text { animation: none; background: none; color: var(--text); }
+    .gallery img, .gallery a:hover img { transition: none; transform: none; }
     * { transition: none !important; }
 }
 </style>
@@ -218,15 +246,86 @@ def load_conversation(thread_id):
     return state.values.get('messages', [])
 
 
+TOOL_LABELS = {
+    'web_search': 'Searching the web',
+    'calculator': 'Calculating',
+    'get_current_datetime': 'Checking the time',
+}
+MAX_IMAGES, MAX_SOURCES = 4, 5
+
+
+def new_extras():
+    return {'images': [], 'sources': []}
+
+
+def merge_extras(extras, artifact):
+    """Tool ke artifact (images + sources) ko extras mein jodta hai, duplicates ke bina."""
+    if not isinstance(artifact, dict):
+        return
+    for url in artifact.get('images', []):
+        if url.startswith('http') and url not in extras['images'] and len(extras['images']) < MAX_IMAGES:
+            extras['images'].append(url)
+    seen = {src['url'] for src in extras['sources']}
+    for src in artifact.get('sources', []):
+        url = src.get('url', '')
+        if url.startswith('http') and url not in seen and len(extras['sources']) < MAX_SOURCES:
+            extras['sources'].append({'title': src.get('title', ''), 'url': url})
+            seen.add(url)
+
+
+def status_html(label):
+    return (
+        '<div class="status-pill" role="status" aria-live="polite" aria-busy="true">'
+        f'<span class="spin"></span><span class="status-text">{html.escape(label)}…</span></div>'
+    )
+
+
+def gallery_html(images):
+    items = ''.join(
+        f'<a href="{html.escape(url, quote=True)}" target="_blank" rel="noopener noreferrer">'
+        f'<img src="{html.escape(url, quote=True)}" alt="Search result image {i}" '
+        'loading="lazy" referrerpolicy="no-referrer"></a>'
+        for i, url in enumerate(images, 1)
+    )
+    return f'<div class="gallery g{len(images)}">{items}</div>'
+
+
+def sources_html(sources):
+    chips = ''.join(
+        f'<a class="src" href="{html.escape(src["url"], quote=True)}" target="_blank" '
+        f'rel="noopener noreferrer" title="{html.escape(src["title"], quote=True)}">'
+        f'<b>{i}</b>{html.escape(urlparse(src["url"]).netloc.removeprefix("www."))}</a>'
+        for i, src in enumerate(sources, 1)
+    )
+    return f'<div class="sources"><span class="sources-label">Sources</span>{chips}</div>'
+
+
+def render_extras_top(images):
+    if images:
+        st.markdown(gallery_html(images), unsafe_allow_html=True)
+
+
+def render_extras_bottom(sources):
+    if sources:
+        st.markdown(sources_html(sources), unsafe_allow_html=True)
+
+
 def to_ui_messages(messages):
-    """LangChain messages ko UI format {'role', 'content'} mein badalta hai."""
-    ui_messages = []
+    """LangChain messages ko UI format mein badalta hai (images/sources saath mein)."""
+    ui_messages, extras = [], new_extras()
     for msg in messages:
         if isinstance(msg, HumanMessage):
+            extras = new_extras()  # naya turn
             ui_messages.append({'role': 'user', 'content': msg.content})
-        # sirf asli AI jawab dikhao; tool call wale (khaali content) aur ToolMessage chhupao
+        elif isinstance(msg, ToolMessage):
+            merge_extras(extras, msg.artifact)
+        # sirf asli AI jawab dikhao; tool call wale (khaali content) chhupao
         elif isinstance(msg, AIMessage) and msg.content:
-            ui_messages.append({'role': 'assistant', 'content': msg.content})
+            ui_messages.append({
+                'role': 'assistant', 'content': msg.content,
+                'images': extras['images'], 'sources': extras['sources'],
+            })
+            extras = new_extras()
     return ui_messages
 
 
@@ -239,29 +338,16 @@ def get_thread_title(thread_id, max_len=32):
     return 'New chat'
 
 
-TOOL_LABELS = {
-    'web_search': 'Searching the web',
-    'calculator': 'Calculating',
-    'get_current_datetime': 'Checking the time',
-}
-
-
-def status_html(label):
-    return (
-        '<div class="status-pill" role="status" aria-live="polite" aria-busy="true">'
-        f'<span class="spin"></span><span class="status-text">{html.escape(label)}…</span></div>'
-    )
-
-
-def ai_only_stream(user_input, config, on_status):
+def ai_only_stream(user_input, config, on_status, extras):
     """Chatbot ko stream mode mein chalata hai: AI ke tokens yield karta hai,
-    tool chalne par on_status(label) bulata hai."""
+    tool chalne par on_status(label) bulata hai aur tool ke images/sources extras mein jodta hai."""
     for message_chunk, metadata in chatbot.stream(
         {'messages': [HumanMessage(content=user_input)]},
         config=config,
         stream_mode='messages',
     ):
         if isinstance(message_chunk, ToolMessage):
+            merge_extras(extras, message_chunk.artifact)
             on_status('Reading sources' if message_chunk.name == 'web_search' else 'Writing the answer')
         elif isinstance(message_chunk, AIMessage):
             for call in message_chunk.tool_call_chunks or []:
@@ -337,7 +423,9 @@ if not st.session_state['message_history'] and not prompt:
 # purani chat history dikhana
 for message in st.session_state['message_history']:
     with st.chat_message(message['role']):
+        render_extras_top(message.get('images'))
         st.markdown(message['content'])
+        render_extras_bottom(message.get('sources'))
 
 if prompt:
     # user ka message save + display
@@ -345,19 +433,24 @@ if prompt:
     with st.chat_message('user'):
         st.markdown(prompt)
 
-    # AI ka reply stream karke display (pehle typing dots, phir tokens)
+    # AI ka reply stream karke display: status pill -> images -> jawab (stream) -> sources
     with st.chat_message('assistant'):
         typing = st.empty()
         typing.markdown(TYPING_HTML, unsafe_allow_html=True)
-        state = {'started': False}
+        gallery_slot = st.empty()  # images jawab ke upar, taaki text stream hone par layout na hile
+        extras, state = new_extras(), {'started': False}
 
         def on_status(label):
-            if not state['started']:
-                typing.markdown(status_html(label), unsafe_allow_html=True)
+            if state['started']:
+                return
+            typing.markdown(status_html(label), unsafe_allow_html=True)
+            if extras['images']:
+                gallery_slot.markdown(gallery_html(extras['images']), unsafe_allow_html=True)
 
         try:
-            stream = hide_on_first_token(ai_only_stream(prompt, CONFIG, on_status), typing, state)
+            stream = hide_on_first_token(ai_only_stream(prompt, CONFIG, on_status, extras), typing, state)
             ai_message = st.write_stream(stream)
+            render_extras_bottom(extras['sources'])
         except Exception as error:
             typing.empty()
             st.error("Couldn't get a reply right now. Please try again.", icon=':material/error:')
@@ -366,7 +459,10 @@ if prompt:
 
     # AI ka reply history mein save (dobara display NAHI karna)
     if ai_message:
-        st.session_state['message_history'].append({'role': 'assistant', 'content': ai_message})
+        st.session_state['message_history'].append({
+            'role': 'assistant', 'content': ai_message,
+            'images': extras['images'], 'sources': extras['sources'],
+        })
 
 
 # ************************* sidebar: conversation list *************************
