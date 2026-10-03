@@ -1,6 +1,10 @@
 from datetime import datetime
-from typing import Annotated, Literal, TypedDict
+from concurrent.futures import ThreadPoolExecutor
+from typing import Annotated, Literal, Tuple, TypedDict
+from urllib.parse import urlparse
 import sqlite3
+
+import requests
 
 from dotenv import load_dotenv
 from langchain_core.messages import BaseMessage, SystemMessage
@@ -44,15 +48,59 @@ def get_current_datetime() -> str:
     return datetime.now().strftime('%A, %d %B %Y, %I:%M %p')
 
 # TavilySearch ke ~10 optional args se gpt-oss confuse hota hai (galat tool call bhejta hai).
-# Isliye chhota wrapper: LLM ko sirf 2 args dikhte hain, aur topic wo khud chunta hai.
-_tavily = TavilySearch(max_results=3)
+# Isliye chhota wrapper: LLM ko sirf 3 args dikhte hain.
+_tavily = TavilySearch(max_results=4)
+
+MAX_IMAGES = 4
+SNIPPET_CHARS = 350  # LLM ko chhota snippet do: kam tokens = Groq free tier ki limit safe
 
 
-@tool
-def web_search(query: str, topic: Literal['general', 'news'] = 'general') -> dict:
+def _is_image(url):
+    """Image URL sach mein khulta hai? (broken/blocked images UI se bahar rakhne ke liye)"""
+    try:
+        with requests.get(url, stream=True, timeout=3, headers={'User-Agent': 'Mozilla/5.0'}) as r:
+            return r.ok and r.headers.get('content-type', '').startswith('image/')
+    except requests.RequestException:
+        return False
+
+
+def _working_images(raw_images):
+    """Tavily ke image urls mein se sirf chalne wale (max MAX_IMAGES), same order mein."""
+    urls = []
+    for item in raw_images or []:
+        url = item.get('url') if isinstance(item, dict) else item
+        if isinstance(url, str) and url.startswith('http') and url not in urls:
+            urls.append(url)
+    urls = urls[:MAX_IMAGES * 2]  # kuch broken honge, isliye thode extra check karo
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        ok = list(pool.map(_is_image, urls))
+    return [u for u, good in zip(urls, ok) if good][:MAX_IMAGES]
+
+
+@tool(response_format='content_and_artifact')
+def web_search(query: str, topic: Literal['general', 'news'] = 'general', with_images: bool = False) -> Tuple[str, dict]:
     """Search the web for current information. Use topic='news' for news and current events,
-    topic='general' for everything else (facts, prices, sports, weather)."""
-    return _tavily.invoke({'query': query, 'topic': topic})
+    topic='general' for everything else (facts, prices, sports, weather).
+    Set with_images=True only when the user asks for pictures/photos or the subject is
+    visual (a place, person, product, animal, landmark)."""
+    try:
+        raw = _tavily.invoke({'query': query, 'topic': topic, 'include_images': with_images})
+    except Exception as error:
+        return f'Search failed: {error}', {'images': [], 'sources': []}
+
+    results = raw.get('results', []) if isinstance(raw, dict) else []
+    if not results:
+        return f"No results found. {raw.get('error', '') if isinstance(raw, dict) else ''}".strip(), {'images': [], 'sources': []}
+
+    # content -> LLM ko jata hai (text only); artifact -> sirf UI ke liye (LLM ko nahi dikhta)
+    lines = []
+    for i, r in enumerate(results, 1):
+        lines.append(f"[{i}] {r.get('title', '')} ({urlparse(r.get('url', '')).netloc})\n{r.get('content', '')[:SNIPPET_CHARS]}")
+    artifact = {
+        'images': _working_images(raw.get('images')) if with_images else [],
+        'sources': [{'title': r.get('title', ''), 'url': r.get('url', '')} for r in results],
+    }
+    return '\n\n'.join(lines), artifact
 
 
 tools = [calculator, get_current_datetime, web_search]
@@ -78,8 +126,12 @@ SYSTEM_PROMPT = SystemMessage(content=(
     "Use web_search when the answer may depend on recent or changing information "
     "(news, current events, prices, sports, weather, recent facts) or when you are unsure. "
     "For 'today', 'latest', 'breaking' or 'current' questions use topic='news'. "
+    "Set with_images=True when the user asks for pictures/photos or the subject is visual. "
+    "Images and source links are shown to the user automatically, so never write image URLs "
+    "or markdown images yourself. "
     "Answer directly, without searching, for general knowledge, coding, or casual chat. "
-    "Never say you lack real-time access; search instead. Mention the source when you use search results."
+    "Never say you lack real-time access; search instead. "
+    "Name the source in plain words (e.g. 'according to Reuters'); never use 【】 citation markers."
 ))
 
 
