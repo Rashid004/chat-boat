@@ -1,6 +1,8 @@
+import html
 import uuid
+
 import streamlit as st
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from chatbot_backend import chatbot, retrieve_all_threads
 
 
@@ -143,8 +145,29 @@ button:focus-visible { outline: 2px solid var(--primary-soft); outline-offset: 2
     40% { opacity: 1; transform: translateY(-3px); }
 }
 
+/* ---------- tool status pill (web search etc.) ---------- */
+.status-pill {
+    display: inline-flex; align-items: center; gap: .6rem; margin: .45rem 0;
+    padding: .4rem .9rem .4rem .75rem; border-radius: 999px; font-size: .86rem;
+    background: var(--primary-bg); border: 1px solid var(--primary-border);
+}
+.status-pill .spin {
+    width: 14px; height: 14px; border-radius: 50%; flex: none;
+    border: 2px solid var(--primary-border); border-top-color: var(--primary-soft);
+    animation: spin .8s linear infinite;
+}
+.status-pill .status-text {
+    background: linear-gradient(90deg, var(--text-muted) 20%, var(--text) 50%, var(--text-muted) 80%);
+    background-size: 200% 100%; -webkit-background-clip: text; background-clip: text;
+    color: transparent; animation: shimmer 1.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
 @media (prefers-reduced-motion: reduce) {
     .typing span { animation: none; opacity: .6; }
+    .status-pill .spin { animation: none; }
+    .status-pill .status-text { animation: none; background: none; color: var(--text); }
     * { transition: none !important; }
 }
 </style>
@@ -216,23 +239,44 @@ def get_thread_title(thread_id, max_len=32):
     return 'New chat'
 
 
-def ai_only_stream(user_input, config):
-    """Chatbot ko stream mode mein chalata hai aur sirf AI ke tokens yield karta hai."""
+TOOL_LABELS = {
+    'web_search': 'Searching the web',
+    'calculator': 'Calculating',
+    'get_current_datetime': 'Checking the time',
+}
+
+
+def status_html(label):
+    return (
+        '<div class="status-pill" role="status" aria-live="polite" aria-busy="true">'
+        f'<span class="spin"></span><span class="status-text">{html.escape(label)}…</span></div>'
+    )
+
+
+def ai_only_stream(user_input, config, on_status):
+    """Chatbot ko stream mode mein chalata hai: AI ke tokens yield karta hai,
+    tool chalne par on_status(label) bulata hai."""
     for message_chunk, metadata in chatbot.stream(
         {'messages': [HumanMessage(content=user_input)]},
         config=config,
         stream_mode='messages',
     ):
-        if isinstance(message_chunk, AIMessage):
-            yield message_chunk.content
+        if isinstance(message_chunk, ToolMessage):
+            on_status('Reading sources' if message_chunk.name == 'web_search' else 'Writing the answer')
+        elif isinstance(message_chunk, AIMessage):
+            for call in message_chunk.tool_call_chunks or []:
+                if call.get('name'):  # tool call ka pehla chunk naam leke aata hai
+                    on_status(TOOL_LABELS.get(call['name'], 'Working'))
+            if message_chunk.content:
+                yield message_chunk.content
 
 
-def hide_on_first_token(stream, placeholder):
-    """Pehla asli token aate hi typing indicator (placeholder) hata deta hai."""
+def hide_on_first_token(stream, placeholder, state):
+    """Pehla asli token aate hi status/typing indicator hata deta hai."""
     for token in stream:
-        if token and placeholder is not None:
+        if token and not state['started']:
+            state['started'] = True
             placeholder.empty()
-            placeholder = None
         yield token
 
 
@@ -305,8 +349,15 @@ if prompt:
     with st.chat_message('assistant'):
         typing = st.empty()
         typing.markdown(TYPING_HTML, unsafe_allow_html=True)
+        state = {'started': False}
+
+        def on_status(label):
+            if not state['started']:
+                typing.markdown(status_html(label), unsafe_allow_html=True)
+
         try:
-            ai_message = st.write_stream(hide_on_first_token(ai_only_stream(prompt, CONFIG), typing))
+            stream = hide_on_first_token(ai_only_stream(prompt, CONFIG, on_status), typing, state)
+            ai_message = st.write_stream(stream)
         except Exception as error:
             typing.empty()
             st.error("Couldn't get a reply right now. Please try again.", icon=':material/error:')
